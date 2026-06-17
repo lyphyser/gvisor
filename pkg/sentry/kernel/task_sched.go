@@ -206,6 +206,11 @@ func (k *Kernel) runCPUClockTicker() {
 			if k.runningTasks.Load() == 0 {
 				k.cpuClockTickerRunning = false
 				k.cpuClockTickerStopCond.Broadcast()
+
+				// The Timekeeper's updater goroutine winds itself down to a park
+				// independently, by observing its own reference count (dropped by
+				// decRunningTasks) at its own ticks (see Timekeeper.startUpdater);
+				// nothing is needed here.
 				k.runningTasksCond.Wait()
 				// k.cpuClockTickerRunning was set to true by our waker
 				// (Kernel.incRunningTasks()). For reasons described there, we must

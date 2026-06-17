@@ -21,7 +21,14 @@ type Clocks interface {
 	// reference host clocks, and returning the new timekeeping parameters.
 	//
 	// Update should be called at approximately ApproxUpdateInterval.
-	Update() (monotonicParams Parameters, monotonicOk bool, realtimeParam Parameters, realtimeOk bool)
+	//
+	// parked indicates that this Update resumes a parked (unobserved) period:
+	// the updater stopped refreshing while the sandbox was idle and nothing
+	// could read the clock. Because the gap was unobserved and (by the parking
+	// policy) at least one update interval long, the implementation re-calibrates
+	// to the freshly sampled parameters rather than slewing the accumulated error
+	// forward over a single interval. Normal periodic updates pass false.
+	Update(parked bool) (monotonicParams Parameters, monotonicOk bool, realtimeParam Parameters, realtimeOk bool)
 
 	// GetTime returns the current time in nanoseconds for the given clock.
 	//

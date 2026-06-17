@@ -1536,9 +1536,20 @@ func (k *Kernel) incRunningTasks() {
 			k.cpuClockTickerRunning = true
 			k.runningTasksCond.Signal()
 		}
-		// This store must happen after the increment of k.cpuClock above to ensure
-		// that concurrent calls to Task.accountTaskGoroutineLeave() also observe
-		// the updated k.cpuClock.
+
+		// Take a Timekeeper reference for as long as tasks are running, so its
+		// updater stays active (and the clock fresh) and never winds down to a park
+		// while a task could read the VDSO. decRunningTasks drops it on the 1->0
+		// transition. addRef re-calibrates a parked updater before returning, so it
+		// is done before publishing the count below: a concurrent resumer that
+		// observes the count then cannot read a drifted clock. Holding runningTasksMu
+		// across addRef cannot deadlock -- the updater goroutine never takes
+		// runningTasksMu, so the lock order is always runningTasksMu -> updateMu, and
+		// only this cold 0->1 path and the idle CPU-clock ticker contend on
+		// runningTasksMu. The store runs after the k.cpuClock increment above so that
+		// concurrent Task.accountTaskGoroutineLeave() calls also observe the updated
+		// k.cpuClock.
+		k.timekeeper.addRef()
 		k.runningTasks.Store(1)
 		k.runningTasksMu.Unlock()
 		return
@@ -1550,11 +1561,17 @@ func (k *Kernel) decRunningTasks() {
 	if tasks < 0 {
 		panic(fmt.Sprintf("Invalid running count %d", tasks))
 	}
+	if tasks == 0 {
+		// The last running task stopped; drop the Timekeeper reference taken by
+		// incRunningTasks on the 0->1 transition, letting its updater wind down to a
+		// park if no clock reads keep it active.
+		k.timekeeper.release()
+	}
 
-	// Nothing to do. The next CPU clock tick will disable the timer if
-	// there is still nothing running. This provides approximately one tick
-	// of slack in which we can switch back and forth between idle and
-	// active without an expensive transition.
+	// Otherwise nothing to do for the CPU clock ticker. The next CPU clock tick
+	// will disable the timer if there is still nothing running. This provides
+	// approximately one tick of slack in which we can switch back and forth between
+	// idle and active without an expensive transition.
 }
 
 // WaitExited blocks until all tasks in k have exited. No tasks can be created
